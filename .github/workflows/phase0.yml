@@ -1,0 +1,74 @@
+name: Phase 0 probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "YouTube video link (an ended stream, public)"
+        required: true
+        type: string
+      start:
+        description: "Clip start time (HH:MM:SS)"
+        required: true
+        default: "00:10:00"
+        type: string
+      seconds:
+        description: "Clip length in seconds"
+        required: true
+        default: "60"
+        type: string
+      height:
+        description: "Max video height (480 is enough for this test)"
+        required: true
+        default: "480"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node (YouTube needs a JS runtime for yt-dlp)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install yt-dlp
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run probe
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+          VIDEO_URL: ${{ inputs.url }}
+          CLIP_START: ${{ inputs.start }}
+          CLIP_SECONDS: ${{ inputs.seconds }}
+          CLIP_HEIGHT: ${{ inputs.height }}
+        run: |
+          python scripts/phase0.py \
+            --url "$VIDEO_URL" \
+            --start "$CLIP_START" \
+            --seconds "$CLIP_SECONDS" \
+            --height "$CLIP_HEIGHT"
+
+      - name: Upload probe output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase0-output
+          path: out/
+          retention-days: 3
+          if-no-files-found: ignore

@@ -1,0 +1,2 @@
+# Kept unpinned on purpose: YouTube changes often and yt-dlp must be current.
+yt-dlp[default]
