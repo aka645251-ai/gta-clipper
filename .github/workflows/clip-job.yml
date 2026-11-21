@@ -3,6 +3,33 @@ name: Clip job
 on:
   repository_dispatch:
     types: [clip-request]
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "YouTube stream/video link"
+        required: true
+        type: string
+      mode:
+        description: "auto = AI picks the top moments, manual = your time range"
+        required: false
+        default: "auto"
+        type: choice
+        options: [auto, manual]
+      start:
+        description: "Window start (HH:MM:SS)"
+        required: false
+        default: "00:00:00"
+        type: string
+      seconds:
+        description: "Manual mode: clip length in seconds"
+        required: false
+        default: "60"
+        type: string
+      count:
+        description: "Auto mode: how many clips"
+        required: false
+        default: "3"
+        type: string
 
 permissions:
   contents: write
@@ -10,7 +37,7 @@ permissions:
 jobs:
   clip:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -35,17 +62,19 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YT_COOKIES: ${{ secrets.YT_COOKIES }}
-          JOB_URL: ${{ github.event.client_payload.url }}
-          JOB_ID: ${{ github.event.client_payload.job_id }}
-          JOB_START: ${{ github.event.client_payload.start }}
-          JOB_SECONDS: ${{ github.event.client_payload.seconds }}
-          JOB_MODE: ${{ github.event.client_payload.mode }}
+          JOB_URL: ${{ github.event.client_payload.url || inputs.url }}
+          JOB_ID: ${{ github.event.client_payload.job_id || format('manual-{0}', github.run_id) }}
+          JOB_START: ${{ github.event.client_payload.start || inputs.start }}
+          JOB_SECONDS: ${{ github.event.client_payload.seconds || inputs.seconds }}
+          JOB_COUNT: ${{ github.event.client_payload.count || inputs.count }}
+          JOB_MODE: ${{ github.event.client_payload.mode || inputs.mode }}
         run: |
           python scripts/clip_job.py \
             --url "$JOB_URL" \
             --job-id "$JOB_ID" \
             --start "$JOB_START" \
             --seconds "$JOB_SECONDS" \
+            --count "$JOB_COUNT" \
             --mode "$JOB_MODE"
         continue-on-error: true
 
@@ -54,5 +83,5 @@ jobs:
           git config user.name "gta-clipper bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add jobs out
-          git commit -m "clip job ${{ github.event.client_payload.job_id }}" || echo "nothing to commit"
+          git commit -m "clip job ${{ github.event.client_payload.job_id || github.run_id }}" || echo "nothing to commit"
           git push

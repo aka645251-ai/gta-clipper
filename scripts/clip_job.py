@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""One clip job for gta-clipper.
+"""One clip job for gta-clipper: one stream link, many finished clips.
 
-Reads the job request, finds the best moment (auto mode) or uses the given
-time range (manual mode), builds the vertical clip (facecam on top, gameplay
-below, burned captions), and writes jobs/<job_id>.json with the result.
+Auto mode asks Gemini to pick the top N moments from the stream's captions
+and, for each, writes a short catchy title, hashtags and a 1-10 virality
+score. Each moment becomes a vertical clip (facecam on top, gameplay below,
+burned captions). Results go to jobs/<job_id>.json; clips to out/<job_id>/.
 Secrets come from the environment only and are never printed.
 """
 import argparse
@@ -29,18 +30,27 @@ FACECAM_PROMPT = (
 )
 PICK_PROMPT = (
     "Below are subtitle lines from one section of a video game live stream, each "
-    "with its time. Pick the SINGLE best moment to cut as a short vertical clip: "
-    "something exciting, funny or shocking that works even without more context. "
-    "Reply with JSON only: {\"start\": \"mm:ss\", \"end\": \"mm:ss\", \"reason\": \"one line\"}. "
-    "The clip must be between 20 and 90 seconds long and inside the section.\n\n"
+    "with its time. Pick the TOP %d best, most separate moments to cut as short "
+    "vertical clips: exciting, funny or shocking, each understandable on its own. "
+    'Reply with JSON only: {"moments": [{"start": "mm:ss", "end": "mm:ss", '
+    '"title": "short catchy YouTube Shorts title in English", '
+    '"hashtags": ["#gta6"], "score": 1-10 virality, "reason": "one line"}]}. '
+    "Every clip must be between 20 and 90 seconds long, inside the section, and "
+    "the moments must not overlap each other. Give exactly %d moments if possible.\n\n"
 )
-FACE_H = 690          # top area height on the 1080x1920 canvas
+TITLE_PROMPT = (
+    "These are the subtitles of one short gameplay clip. Write a short catchy "
+    'YouTube Shorts title in English and 3-5 hashtags. Reply JSON only: '
+    '{"title": "...", "hashtags": ["#..."]}. The title must not end with the '
+    "hashtags; they come separately.\n\n"
+)
+FACE_H = 690
 BOTTOM_H = 1920 - FACE_H
 FONT_STYLE = ("force_style=FontName=DejaVu Sans,FontSize=52,Bold=1,"
               "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=3,Shadow=1,"
               "Alignment=2,MarginV=60")
 
-STATUS = {"status": "running", "steps": {}}
+STATUS = {"status": "running", "steps": {}, "clips": []}
 
 
 def parse_time(text):
@@ -92,14 +102,12 @@ def classify_error(text):
     return "other"
 
 
-def gemini(parts, want_json=True, timeout=90):
+def gemini(parts, timeout=90):
     key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not key:
         return None, "GEMINI_API_KEY secret is not set"
-    body = json.dumps({
-        "contents": [{"parts": parts}],
-        "generationConfig": {"responseMimeType": "application/json"} if want_json else {},
-    }).encode("utf-8")
+    body = json.dumps({"contents": [{"parts": parts}],
+                       "generationConfig": {"responseMimeType": "application/json"}}).encode("utf-8")
     last = ""
     for model in GEMINI_MODELS:
         url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent" % model
@@ -146,32 +154,65 @@ def fetch_captions(url, out_dir):
     return lines, ""
 
 
-def pick_best(lines, start, window):
+def clean_tags(tags):
+    out = []
+    for t in (tags or [])[:5]:
+        t = str(t).strip().replace(" ", "")
+        if not t:
+            continue
+        if not t.startswith("#"):
+            t = "#" + t
+        out.append(t)
+    return out
+
+
+def pick_moments(lines, start, window, count):
     in_window = [l for l in lines if start <= l["t"] <= start + window]
     if not in_window:
         return None, "captions empty in the window"
     listing = "\n".join("%s %s" % (fmt_time(l["t"])[3:], l["text"][:110]) for l in in_window[:400])
-    result, err = gemini([{"text": PICK_PROMPT + listing}], want_json=True)
+    result, err = gemini([{"text": (PICK_PROMPT % (count, count)) + listing}])
+    moments = (result or {}).get("moments") or []
+    chosen = []
+    for m in sorted(moments, key=lambda x: -float(x.get("score", 0) or 0)):
+        try:
+            cs = start + parse_time(m["start"])
+            ce = start + parse_time(m["end"])
+        except (KeyError, ValueError):
+            continue
+        if not (start <= cs < ce <= start + window + 5) or ce - cs < 20 or ce - cs > 90:
+            continue
+        if any(min(ce, c["end"]) - max(cs, c["start"]) > 20 for c in chosen):
+            continue
+        chosen.append({"start": cs, "end": ce, "title": str(m.get("title", "") or "")[:120],
+                       "hashtags": clean_tags(m.get("hashtags")),
+                       "score": max(1, min(10, int(float(m.get("score", 5) or 5)))),
+                       "reason": str(m.get("reason", "") or "")[:200]})
+        if len(chosen) >= count:
+            break
+    if not chosen:
+        return None, "gemini ne sahi moments nahi diye (%s)" % (err or "empty")
+    chosen.sort(key=lambda c: -c["score"])
+    return chosen, ""
+
+
+def title_for(lines, start, seconds):
+    text = " ".join(l["text"] for l in lines if start <= l["t"] <= start + seconds)[:3000]
+    if not text.strip():
+        return "", []
+    result, _ = gemini([{"text": TITLE_PROMPT + text}])
     if not result:
-        return None, "gemini pick failed: %s" % err
-    try:
-        cs, ce = parse_time(result["start"]), parse_time(result["end"])
-    except (KeyError, ValueError):
-        return None, "gemini gave a bad time range"
-    cs += start
-    ce += start
-    if not (start <= cs < ce <= start + window + 5) or ce - cs < 15 or ce - cs > 120:
-        return None, "gemini picked a range outside the rules (%s-%s)" % (fmt_time(cs), fmt_time(ce))
-    return {"start": cs, "end": ce, "reason": str(result.get("reason", ""))[:200]}, ""
+        return "", []
+    return str(result.get("title", "") or "")[:120], clean_tags(result.get("hashtags"))
 
 
-def download_section(url, start, seconds, out_dir, max_height=1080):
+def download_section(url, start, seconds, out_dir, tag, max_height=1080):
     section = "*%s-%s" % (fmt_time(start), fmt_time(start + seconds + 2))
     fmt = "bv*[height<=%d]+ba/b[height<=%d]" % (max_height, max_height)
     rc, _, err = ytdlp(["-f", fmt, "--download-sections", section,
                         "--force-keyframes-at-cuts", "--merge-output-format", "mp4",
-                        "-o", str(out_dir / "src.%(ext)s"), url], 900)
-    files = sorted(out_dir.glob("src.*"))
+                        "-o", str(out_dir / ("src-%s.%%(ext)s" % tag)), url], 900)
+    files = sorted(out_dir.glob("src-%s.*" % tag))
     if rc != 0 or not files:
         return None, (err or "")
     return files[0], ""
@@ -220,8 +261,7 @@ def render(clip, box, srt_path, out_path):
                  "[top][bot]vstack=inputs=2[out]") % {"fw": fw, "fh": fh, "fx": fx, "fy": fy,
                                                       "face": FACE_H, "bot": BOTTOM_H}
     else:
-        chain = ("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-                 "crop=1080:1920[out]") % {"w": w, "h": h}
+        chain = "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[out]"
     vf = chain + ";[out]subtitles=%s:%s[out2]" % (srt_path, FONT_STYLE)
     cmd = ["ffmpeg", "-y", "-i", str(clip), "-filter_complex", vf, "-map", "[out2]",
            "-map", "0:a?", "-c:v", "libx264", "-preset", "medium", "-crf", "23",
@@ -264,22 +304,22 @@ def main():
     ap.add_argument("--job-id", required=True)
     ap.add_argument("--start", default="00:00:00")
     ap.add_argument("--seconds", type=int, default=60)
-    ap.add_argument("--mode", default="manual", choices=["manual", "auto"])
-    ap.add_argument("--window", type=int, default=900)
+    ap.add_argument("--count", type=int, default=3)
+    ap.add_argument("--mode", default="auto", choices=["manual", "auto"])
+    ap.add_argument("--window", type=int, default=1800)
     args = ap.parse_args()
 
     out_dir = Path("out") / args.job_id
     out_dir.mkdir(parents=True, exist_ok=True)
     STATUS.update({"id": args.job_id, "url": args.url, "mode": args.mode,
-                   "status": "running", "error": ""})
+                   "status": "running", "error": "", "count": args.count})
     start = parse_time(args.start)
 
     try:
         meta_rc, meta_out, meta_err = ytdlp(["--dump-single-json", "--skip-download", args.url], 240)
         if meta_rc == 0:
             try:
-                info = json.loads(meta_out)
-                STATUS["title"] = info.get("title")
+                STATUS["title"] = json.loads(meta_out).get("title")
             except ValueError:
                 pass
         else:
@@ -292,45 +332,60 @@ def main():
         STATUS["steps"]["captions"] = "ok (%d lines)" % len(lines)
 
         if args.mode == "auto":
-            pick, err = pick_best(lines, start, args.window)
-            if not pick:
-                raise RuntimeError("best moment nahi mila: %s" % err)
-            STATUS["best_moment"] = {"start": fmt_time(pick["start"]), "end": fmt_time(pick["end"]),
-                                     "reason": pick["reason"]}
-            start = pick["start"]
-            seconds = int(min(max(round(pick["end"] - pick["start"]), 20), 120))
+            moments, err = pick_moments(lines, start, args.window, args.count)
+            if not moments:
+                raise RuntimeError("best moments nahi mile: %s" % err)
         else:
-            seconds = args.seconds
-        STATUS["start"] = fmt_time(start)
-        STATUS["seconds"] = seconds
+            t, tags = title_for(lines, start, args.seconds)
+            moments = [{"start": start, "end": start + args.seconds, "title": t,
+                        "hashtags": tags, "score": 10, "reason": "manual range"}]
 
-        clip, err = download_section(args.url, start, seconds, out_dir)
-        if not clip:
-            raise RuntimeError("clip download fail (%s): %s" % (
-                classify_error(err), (err or "")[-200:].strip()))
-        STATUS["steps"]["download"] = "ok"
+        STATUS["steps"]["pick"] = "%d moments" % len(moments)
+        box = None
+        rank = 0
+        for i, m in enumerate(moments, 1):
+            rank += 1
+            seconds = int(m["end"] - m["start"])
+            clip, err = download_section(args.url, m["start"], seconds, out_dir, "c%d" % i)
+            if not clip:
+                STATUS["clips"].append({"rank": rank, "status": "error",
+                                        "error": "download fail (%s)" % classify_error(err),
+                                        "start": fmt_time(m["start"]), "seconds": seconds,
+                                        "title": m["title"], "hashtags": m["hashtags"],
+                                        "score": m["score"]})
+                continue
+            if box is None:
+                box = facecam_box(clip, out_dir)
+            srt = out_dir / ("cap-c%d.srt" % i)
+            has_subs = write_srt(lines, m["start"], seconds, srt)
+            final = out_dir / ("clip-%d.mp4" % i)
+            err = render(clip, box, str(srt) if has_subs else "", final)
+            if err:
+                STATUS["clips"].append({"rank": rank, "status": "error", "error": "render fail: %s" % err,
+                                        "start": fmt_time(m["start"]), "seconds": seconds,
+                                        "title": m["title"], "hashtags": m["hashtags"], "score": m["score"]})
+                continue
+            size_mb = final.stat().st_size / 1048576.0
+            entry = {"rank": rank, "status": "done", "file": "out/%s/clip-%d.mp4" % (args.job_id, i),
+                     "size_mb": round(size_mb, 1), "start": fmt_time(m["start"]), "seconds": seconds,
+                     "title": m["title"], "hashtags": m["hashtags"], "score": m["score"],
+                     "reason": m["reason"]}
+            if size_mb > 95:
+                entry.update({"status": "error", "error": "clip %.0f MB, GitHub limit 95 MB" % size_mb})
+                final.unlink()
+            STATUS["clips"].append(entry)
+            STATUS["steps"]["clip-%d" % i] = entry["status"]
 
-        box = facecam_box(clip, out_dir)
-        STATUS["steps"]["facecam"] = "found" if box else "not found (full gameplay)"
-
-        srt = out_dir / "captions.srt"
-        has_subs = write_srt(lines, start, seconds, srt)
-        STATUS["steps"]["captions_burned"] = "yes" if has_subs else "no (no lines in range)"
-
-        final = out_dir / "clip.mp4"
-        err = render(clip, box, str(srt) if has_subs else "", final)
-        if err:
-            raise RuntimeError("render fail: %s" % err)
-        size_mb = final.stat().st_size / 1048576.0
-        STATUS.update({"status": "done", "clip": {"path": "out/%s/clip.mp4" % args.job_id,
-                                                  "size_mb": round(size_mb, 1)}})
-        if size_mb > 95:
-            STATUS.update({"status": "error", "error": "clip %.0f MB, GitHub limit 95 MB; chhota clip try karo" % size_mb})
-            final.unlink()
+        done = sum(1 for c in STATUS["clips"] if c.get("status") == "done")
+        if done:
+            STATUS["status"] = "done"
+            STATUS["facecam"] = "found" if box else "not found (full gameplay)"
+        else:
+            STATUS["status"] = "error"
+            STATUS["error"] = "koi clip nahi bani"
     except Exception as exc:
         STATUS["status"] = "error"
         STATUS["error"] = str(exc)[:500]
-        STATUS.setdefault("steps", {})["failed_at"] = "see error"
     save_status(args.job_id, STATUS)
     return 0 if STATUS["status"] == "done" else 1
 
