@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GTA Clipper</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>GTA <span>Clipper</span></h1>
+  <p>Link daalo, dashboard clip banake dunga</p>
+</header>
+
+<section class="card">
+  <label>YouTube link</label>
+  <input id="url" type="url" placeholder="https://www.youtube.com/watch?v=...">
+
+  <div class="row">
+    <div class="col">
+      <label>Mode</label>
+      <select id="mode">
+        <option value="auto">Auto (best moment khud choose karega)</option>
+        <option value="manual">Manual (mera time range)</option>
+      </select>
+    </div>
+    <div class="col" id="startcol">
+      <label>Start time (HH:MM:SS)</label>
+      <input id="start" type="text" placeholder="00:10:00">
+    </div>
+    <div class="col">
+      <label>Length (seconds, 10-180)</label>
+      <input id="seconds" type="number" value="60" min="10" max="180">
+    </div>
+  </div>
+
+  <button id="go">Clip banao</button>
+  <p id="msg" class="msg"></p>
+</section>
+
+<section>
+  <h2>Jobs</h2>
+  <div id="jobs" class="jobs"><p class="dim">Loading...</p></div>
+</section>
+
+<footer>Pvt tool - aka645251</footer>
+<script src="app.js"></script>
+</body>
+</html>

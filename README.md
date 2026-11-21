@@ -1,32 +1,43 @@
 # gta-clipper
 
-Private project: turn very long game streams into short vertical clips
-(facecam on top, gameplay below, auto captions), from a YouTube link.
+Private tool: paste a YouTube link on the dashboard, it cuts a short vertical
+clip (facecam on top, gameplay below, burned captions) on GitHub's servers and
+shows it back on the site with a download button.
 
-## Phase 0: can the server do the basics?
+## How it works
 
-Run the **Phase 0 probe** workflow (Actions tab, Run workflow). It checks, in order:
+1. The Netlify site (dashboard) takes the link and options.
+2. A Netlify function writes `jobs/<id>.json` and triggers the `clip-job`
+   workflow on GitHub.
+3. GitHub Actions runs `scripts/clip_job.py`: yt-dlp downloads the section,
+   YouTube captions become the burned subtitles, Gemini finds the facecam box
+   (auto mode also asks Gemini to pick the best moment), ffmpeg renders
+   1080x1920.
+4. The workflow commits `out/<id>/clip.mp4` and the status file back to the
+   repo; the dashboard polls and shows the download.
 
-1. Can GitHub's server read the YouTube video?
-2. Can it fetch the auto-captions (text only)?
-3. Can it download only a short section, not the whole stream?
-4. Can Gemini find the facecam box in one frame?
+## Setup
 
-The result is in the run summary, and the clip, frame and `report.json`
-are in the `phase0-output` artifact (kept for 3 days).
-
-### Secrets (Settings, Secrets and variables, Actions)
+### GitHub repo secrets (Settings, Secrets and variables, Actions)
 
 | Name | Needed | What for |
 |---|---|---|
-| `GEMINI_API_KEY` | yes, for step 4 | Gemini API key (free tier is fine) |
-| `YT_COOKIES` | only if YouTube blocks the server | Netscape-format cookies.txt. Use a spare Google account, not your main one |
+| `GEMINI_API_KEY` | yes | facecam detection + best-moment picking (free tier is fine) |
+| `YT_COOKIES` | only if YouTube blocks the runner | Netscape cookies.txt from a spare Google account |
+
+### Netlify site environment variables (Site configuration, Environment variables)
+
+| Name | Value |
+|---|---|
+| `GITHUB_TOKEN` | a fine-grained token with Actions: write + Contents: read/write on this repo only |
+| `GITHUB_REPO` | `aka645251-ai/gta-clipper` |
+
+## Files
+
+- `web/` - the dashboard (static site, deployed on Netlify)
+- `netlify/functions/` - `create-job` and `jobs` (trigger + status + download proxy)
+- `scripts/clip_job.py` - the clipping engine (runs on GitHub Actions)
+- `scripts/phase0.py` - the Phase 0 probe (kept for reference)
+- `.github/workflows/clip-job.yml` - the job runner
 
 Never paste a key into a chat or commit it to the repo.
-
-### What the result means
-
-- **All PASS:** the plan works; Phase 1 (the clipping engine) can start.
-- **meta or clip FAIL with reason `bot_block`:** YouTube is blocking the server.
-  Try the `YT_COOKIES` secret once; if it still fails, the engine has to run somewhere else.
-- **gemini FAIL or `box_valid: false`:** facecam detection needs a better prompt or a different model.
