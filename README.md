@@ -6,9 +6,10 @@ shows it back on the site with a download button.
 
 ## How it works
 
-1. The Netlify site (dashboard) takes the link and options.
-2. A Netlify function writes `jobs/<id>.json` and triggers the `clip-job`
-   workflow on GitHub.
+1. The dashboard (docs/index.html, hosted on GitHub Pages) takes the link and
+   options.
+2. The browser writes `jobs/<id>.json` via the GitHub API and triggers the
+   `clip-job` workflow.
 3. GitHub Actions runs `scripts/clip_job.py`: yt-dlp downloads the section,
    YouTube captions become the burned subtitles, Gemini finds the facecam box
    (auto mode also asks Gemini to pick the best moment), ffmpeg renders
@@ -25,17 +26,15 @@ shows it back on the site with a download button.
 | `GEMINI_API_KEY` | yes | facecam detection + best-moment picking (free tier is fine) |
 | `YT_COOKIES` | only if YouTube blocks the runner | Netscape cookies.txt from a spare Google account |
 
-### Netlify site environment variables (Site configuration, Environment variables)
+### Dashboard token (one time, in the dashboard's Setup step)
 
-| Name | Value |
-|---|---|
-| `GITHUB_TOKEN` | a fine-grained token with Actions: write + Contents: read/write on this repo only |
-| `GITHUB_REPO` | `aka645251-ai/gta-clipper` |
+A fine-grained token with Actions: write + Contents: read/write on this repo
+only, saved in your own browser's local storage. It never goes into the repo.
 
 ## Files
 
-- `web/` - the dashboard (static site, deployed on Netlify)
-- `netlify/functions/` - `create-job` and `jobs` (trigger + status + download proxy)
+- `docs/` - the dashboard (single file, hosted on GitHub Pages)
+- `web/` - old multi-file dashboard, kept for reference
 - `scripts/clip_job.py` - the clipping engine (runs on GitHub Actions)
 - `scripts/phase0.py` - the Phase 0 probe (kept for reference)
 - `.github/workflows/clip-job.yml` - the job runner
