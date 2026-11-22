@@ -262,8 +262,13 @@ def render(clip, box, srt_path, out_path):
                                                       "face": FACE_H, "bot": BOTTOM_H}
     else:
         chain = "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[out]"
-    vf = chain + ";[out]subtitles=%s:%s[out2]" % (srt_path, FONT_STYLE)
-    cmd = ["ffmpeg", "-y", "-i", str(clip), "-filter_complex", vf, "-map", "[out2]",
+    if srt_path:
+        vf = chain + ";[out]subtitles=%s:'%s'[out2]" % (srt_path, FONT_STYLE)
+        out_label = "[out2]"
+    else:
+        vf = chain
+        out_label = "[out]"
+    cmd = ["ffmpeg", "-y", "-i", str(clip), "-filter_complex", vf, "-map", out_label,
            "-map", "0:a?", "-c:v", "libx264", "-preset", "medium", "-crf", "23",
            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out_path)]
     rc, _, err = run(cmd, 1500)
