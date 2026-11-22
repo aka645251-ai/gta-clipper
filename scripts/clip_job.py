@@ -322,6 +322,8 @@ def main():
 
     try:
         meta_rc, meta_out, meta_err = ytdlp(["--dump-single-json", "--skip-download", args.url], 240)
+        if meta_rc != 0:
+            meta_rc, meta_out, meta_err = ytdlp(["--dump-single-json", "--skip-download", args.url], 240)
         if meta_rc == 0:
             try:
                 STATUS["title"] = json.loads(meta_out).get("title")
