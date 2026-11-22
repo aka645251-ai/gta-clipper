@@ -1,0 +1,79 @@
+name: Pending queue
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pending-queue
+  cancel-in-progress: false
+
+jobs:
+  queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Gate on queued commit
+        id: gate
+        run: |
+          if [[ "${{ github.event.head_commit.message }}" == queue-job* ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out repo
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node (YouTube needs a JS runtime for yt-dlp)
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install ffmpeg and fonts
+        if: steps.gate.outputs.run == 'true'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+
+      - name: Install yt-dlp and deps
+        if: steps.gate.outputs.run == 'true'
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Run queued jobs
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+        run: |
+          shopt -s nullglob
+          for f in jobs/pending/*.json; do
+            echo "=== $f ==="
+            URL=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['url'])" "$f")
+            JID=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['job_id'])" "$f")
+            MODE=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('mode','auto'))" "$f")
+            START=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('start','00:00:00'))" "$f")
+            SECS=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('seconds','60'))" "$f")
+            CNT=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('count','3'))" "$f")
+            python scripts/clip_job.py --url "$URL" --job-id "$JID" --mode "$MODE" --start "$START" --seconds "$SECS" --count "$CNT" || true
+            mkdir -p jobs/archive
+            mv "$f" "jobs/archive/$JID.request.json"
+          done
+
+      - name: Commit results
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          git config user.name "gta-clipper bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A jobs out
+          git commit -m "processed queue" || echo "nothing to commit"
+          git push
