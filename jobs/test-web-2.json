@@ -1,0 +1,11 @@
+{
+  "status": "error",
+  "steps": {},
+  "clips": [],
+  "id": "test-web-2",
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "mode": "manual",
+  "error": "video khulta hi nahi (other): tract any player response; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm you are on the latest version using  yt-dlp -U",
+  "count": 1,
+  "updated_at": "2026-11-22T16:38:25.624620Z"
+}
