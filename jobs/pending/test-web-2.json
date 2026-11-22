@@ -1,0 +1,8 @@
+{
+  "job_id": "test-web-2",
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "mode": "manual",
+  "start": "00:00:30",
+  "seconds": "25",
+  "count": "1"
+}
