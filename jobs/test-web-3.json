@@ -1,0 +1,36 @@
+{
+  "status": "done",
+  "steps": {
+    "captions": "ok (61 lines)",
+    "pick": "1 moments",
+    "clip-1": "done"
+  },
+  "clips": [
+    {
+      "rank": 1,
+      "status": "done",
+      "file": "out/test-web-3/clip-1.mp4",
+      "size_mb": 12.9,
+      "start": "00:00:30",
+      "seconds": 25,
+      "title": "When the game Rickrolls you... 💀",
+      "hashtags": [
+        "#Rickroll",
+        "#Gaming",
+        "#Shorts",
+        "#Memes",
+        "#GamingMemes"
+      ],
+      "score": 10,
+      "reason": "manual range"
+    }
+  ],
+  "id": "test-web-3",
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "mode": "manual",
+  "error": "",
+  "count": 1,
+  "title": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
+  "facecam": "not found (full gameplay)",
+  "updated_at": "2026-11-22T17:02:23.535744Z"
+}
